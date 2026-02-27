@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water Molecule Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    color: #c0d8f0;
+  }
+  canvas {
+    border-radius: 12px;
+    box-shadow: 0 0 40px rgba(30, 100, 200, 0.15);
+    cursor: crosshair;
+  }
+  .controls {
+    display: flex;
+    gap: 16px;
+    margin-top: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  button {
+    background: rgba(30, 100, 200, 0.2);
+    color: #8ec8f8;
+    border: 1px solid rgba(80, 150, 240, 0.3);
+    padding: 8px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  button:hover { background: rgba(30, 100, 200, 0.4); }
+  .info {
+    font-size: 13px;
+    opacity: 0.6;
+    margin-top: 8px;
+  }
+  label { font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  input[type=range] { width: 100px; accent-color: #4a9aea; }
+</style>
+</head>
+<body>
+<canvas id="sim"></canvas>
+<div class="controls">
+  <button id="addBtn">+ Add Molecules</button>
+  <button id="resetBtn">Reset</button>
+  <label>Gravity <input type="range" id="gravSlider" min="0" max="5" step="0.1" value="1.5"></label>
+  <label>Temp <input type="range" id="tempSlider" min="0" max="10" step="0.1" value="2"></label>
+</div>
+<div class="info">Click &amp; drag to attract molecules &middot; Right-click to repel</div>
+
+<script>
+// --- Canvas setup ---
+const canvas = document.getElementById('sim');
+const ctx = canvas.getContext('2d');
+const W = canvas.width = Math.min(window.innerWidth - 40, 900);
+const H = canvas.height = Math.min(window.innerHeight - 120, 600);
+
+// --- Simulation parameters ---
+let gravity = 1.5;
+let temperature = 2;
+const BOND_ANGLE = 104.5 * Math.PI / 180;
+const BOND_LEN = 10;
+const MOL_RADIUS = 7;
+const H_RADIUS = 4.5;
+const DAMPING = 0.98;
+const REPULSION = 800;
+const ATTRACTION = 0.3;
+const ATTRACT_DIST = 60;
+
+// --- Mouse state ---
+let mouse = { x: -1000, y: -1000, down: false, right: false };
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - r.left;
+  mouse.y = e.clientY - r.top;
+});
+canvas.addEventListener('mousedown', e => {
+  e.preventDefault();
+  mouse.down = true;
+  mouse.right = e.button === 2;
+});
+canvas.addEventListener('mouseup', () => { mouse.down = false; mouse.right = false; });
+canvas.addEventListener('mouseleave', () => { mouse.down = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// --- Molecule class ---
+class Molecule {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = (Math.random() - 0.5) * 4;
+    this.vy = (Math.random() - 0.5) * 4;
+    this.angle = Math.random() * Math.PI * 2;
+    this.angVel = (Math.random() - 0.5) * 0.1;
+  }
+
+  get h1x() { return this.x + Math.cos(this.angle - BOND_ANGLE / 2) * BOND_LEN; }
+  get h1y() { return this.y + Math.sin(this.angle - BOND_ANGLE / 2) * BOND_LEN; }
+  get h2x() { return this.x + Math.cos(this.angle + BOND_ANGLE / 2) * BOND_LEN; }
+  get h2y() { return this.y + Math.sin(this.angle + BOND_ANGLE / 2) * BOND_LEN; }
+
+  update(dt) {
+    // Gravity
+    this.vy += gravity * dt;
+
+    // Temperature jitter
+    this.vx += (Math.random() - 0.5) * temperature * dt;
+    this.vy += (Math.random() - 0.5) * temperature * dt;
+    this.angVel += (Math.random() - 0.5) * temperature * 0.02 * dt;
+
+    // Mouse interaction
+    if (mouse.down) {
+      const dx = mouse.x - this.x;
+      const dy = mouse.y - this.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+      if (dist < 150) {
+        const force = mouse.right ? -3 : 2;
+        this.vx += (dx / dist) * force * dt;
+        this.vy += (dy / dist) * force * dt;
+      }
+    }
+
+    // Damping
+    this.vx *= DAMPING;
+    this.vy *= DAMPING;
+    this.angVel *= 0.96;
+
+    // Integrate
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.angle += this.angVel * dt;
+
+    // Wall collisions
+    const margin = MOL_RADIUS + 2;
+    if (this.x < margin) { this.x = margin; this.vx *= -0.5; }
+    if (this.x > W - margin) { this.x = W - margin; this.vx *= -0.5; }
+    if (this.y < margin) { this.y = margin; this.vy *= -0.5; }
+    if (this.y > H - margin) { this.y = H - margin; this.vy *= -0.3; }
+  }
+
+  draw() {
+    const h1x = this.h1x, h1y = this.h1y;
+    const h2x = this.h2x, h2y = this.h2y;
+
+    // Bonds
+    ctx.strokeStyle = 'rgba(150, 200, 255, 0.5)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(h1x, h1y);
+    ctx.lineTo(this.x, this.y);
+    ctx.lineTo(h2x, h2y);
+    ctx.stroke();
+
+    // Oxygen
+    const oGrad = ctx.createRadialGradient(this.x - 2, this.y - 2, 1, this.x, this.y, MOL_RADIUS);
+    oGrad.addColorStop(0, '#ff4444');
+    oGrad.addColorStop(1, '#aa0000');
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, MOL_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = oGrad;
+    ctx.fill();
+
+    // Hydrogens
+    for (const [hx, hy] of [[h1x, h1y], [h2x, h2y]]) {
+      const hGrad = ctx.createRadialGradient(hx - 1, hy - 1, 0.5, hx, hy, H_RADIUS);
+      hGrad.addColorStop(0, '#ffffff');
+      hGrad.addColorStop(1, '#aabbcc');
+      ctx.beginPath();
+      ctx.arc(hx, hy, H_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = hGrad;
+      ctx.fill();
+    }
+  }
+}
+
+// --- Intermolecular forces ---
+function applyForces(molecules, dt) {
+  for (let i = 0; i < molecules.length; i++) {
+    for (let j = i + 1; j < molecules.length; j++) {
+      const a = molecules[i], b = molecules[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const distSq = dx * dx + dy * dy;
+      const dist = Math.sqrt(distSq) + 0.1;
+
+      // Short-range repulsion (Lennard-Jones-like)
+      if (dist < MOL_RADIUS * 3) {
+        const force = REPULSION / (distSq + 100);
+        const fx = (dx / dist) * force * dt;
+        const fy = (dy / dist) * force * dt;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+
+      // Hydrogen bond attraction
+      if (dist > MOL_RADIUS * 2.5 && dist < ATTRACT_DIST) {
+        const force = ATTRACTION * dt;
+        a.vx += (dx / dist) * force;
+        a.vy += (dy / dist) * force;
+        b.vx -= (dx / dist) * force;
+        b.vy -= (dy / dist) * force;
+
+        // Draw hydrogen bond hint
+        if (dist < ATTRACT_DIST * 0.8) {
+          ctx.strokeStyle = `rgba(100, 180, 255, ${0.08 * (1 - dist / ATTRACT_DIST)})`;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 4]);
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
+  }
+}
+
+// --- Init molecules ---
+let molecules = [];
+
+function spawnMolecules(count) {
+  for (let i = 0; i < count; i++) {
+    molecules.push(new Molecule(
+      Math.random() * (W - 40) + 20,
+      Math.random() * (H - 40) + 20
+    ));
+  }
+}
+
+spawnMolecules(80);
+
+// --- Controls ---
+document.getElementById('addBtn').addEventListener('click', () => spawnMolecules(20));
+document.getElementById('resetBtn').addEventListener('click', () => {
+  molecules = [];
+  spawnMolecules(80);
+});
+document.getElementById('gravSlider').addEventListener('input', e => { gravity = +e.target.value; });
+document.getElementById('tempSlider').addEventListener('input', e => { temperature = +e.target.value; });
+
+// --- Main loop ---
+let lastTime = performance.now();
+
+function frame(now) {
+  const dt = Math.min((now - lastTime) / 16, 3);
+  lastTime = now;
+
+  // Background
+  ctx.fillStyle = 'rgba(6, 10, 28, 0.85)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Water-like gradient at bottom
+  const waterGrad = ctx.createLinearGradient(0, H * 0.6, 0, H);
+  waterGrad.addColorStop(0, 'rgba(10, 40, 80, 0)');
+  waterGrad.addColorStop(1, 'rgba(10, 40, 80, 0.15)');
+  ctx.fillStyle = waterGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  applyForces(molecules, dt);
+  for (const m of molecules) m.update(dt);
+  for (const m of molecules) m.draw();
+
+  // HUD
+  ctx.fillStyle = 'rgba(140, 190, 240, 0.5)';
+  ctx.font = '13px monospace';
+  ctx.fillText(`molecules: ${molecules.length}`, 12, 22);
+
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
